@@ -1,0 +1,7 @@
+.env
+.env.*
+!.env.example
+config.js
+config.local.js
+__pycache__/
+*.pyc

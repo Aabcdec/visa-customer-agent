@@ -1,0 +1,7 @@
+name = "visa-h5-proxy"
+main = "src/index.js"
+compatibility_date = "2024-11-01"
+
+# 部署后在 Cloudflare 控制台 → Worker → Settings → Variables
+# 添加密钥 TOKEN（扣子 Bearer），或用下面命令写入：
+#   npx wrangler secret put TOKEN

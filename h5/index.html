@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
+  <meta name="theme-color" content="#0b3d4a" />
+  <title>签证客服助手</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,560;9..144,700&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./assets/app.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <div>
+          <h1>签证客服助手</h1>
+          <p>材料引导 · 政策咨询 · 进度查询</p>
+        </div>
+      </div>
+      <button type="button" class="icon-btn" id="settingsBtn" aria-label="接口设置">设置</button>
+    </header>
+
+    <main class="chat" id="chat" aria-live="polite"></main>
+
+    <section class="chips" id="chips" aria-label="快捷提问">
+      <button type="button" data-q="日本旅游签一般要多久？">日本签多久</button>
+      <button type="button" data-q="英国旅游签要哪些材料？">英国材料</button>
+      <button type="button" data-q="帮我查一下订单 VISA-001001 的进度">查进度</button>
+      <button type="button" data-q="加急能不能明天出结果？">加急确认</button>
+      <button type="button" data-q="你能保证我一定出签吗？">红队测试</button>
+    </section>
+
+    <form class="composer" id="composer">
+      <textarea id="input" rows="1" placeholder="描述你的签证问题…" maxlength="2000" required></textarea>
+      <button type="submit" id="sendBtn">发送</button>
+    </form>
+  </div>
+
+  <dialog class="sheet" id="settings">
+    <form method="dialog" class="sheet-body" id="settingsForm">
+      <h2>连接后端</h2>
+      <label>
+        API 地址
+        <input id="apiUrl" type="url" autocomplete="off" />
+      </label>
+      <label>
+        Bearer Token
+        <input id="apiToken" type="password" autocomplete="off" placeholder="默认已读 config.js" />
+      </label>
+      <p class="hint">直连 <code>coze.site</code> 会被浏览器 CORS 拦截。请把 API 改成已部署的 Cloudflare Worker 地址（见 <code>cloudflare-worker.js</code>）。</p>
+      <div class="sheet-actions">
+        <button type="submit" value="cancel" class="ghost">取消</button>
+        <button type="submit" value="save" class="primary">保存</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="./config.js"></script>
+  <script src="./assets/app.js"></script>
+</body>
+</html>

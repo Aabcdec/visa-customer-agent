@@ -1,0 +1,30 @@
+# 密钥与本地配置（禁止入库）
+.env
+.env.*
+!.env.example
+h5/config.js
+!h5/config.example.js
+
+# 依赖与构建
+**/node_modules/
+**/.venv/
+**/__pycache__/
+*.pyc
+dist/
+.DS_Store
+
+# Coze / IDE
+.cozeproj/reduction
+.preview
+.codegraph
+.idea/
+.vscode/
+
+# 压缩包与大文件
+*.rar
+*.zip
+*.gz
+*.7z
+*.pdf
+*.docx
+*.doc
