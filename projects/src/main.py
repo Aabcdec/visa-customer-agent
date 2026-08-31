@@ -52,6 +52,14 @@ from coze_coding_utils.log.parser import LangGraphParser
 from coze_coding_utils.log.err_trace import extract_core_stack
 from coze_coding_utils.log.loop_trace import init_run_config, init_agent_config
 
+# Langfuse tracing（密钥用环境变量 LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY / LANGFUSE_BASE_URL）
+try:
+    from langfuse import get_client as _langfuse_get_client
+    from langfuse import observe as _langfuse_observe
+except ImportError:  # 未安装 langfuse 时仍可本地跑通，不阻断 /run
+    _langfuse_get_client = None
+    _langfuse_observe = lambda **_kw: (lambda f: f)  # noqa: E731
+
 
 # 超时配置常量
 TIMEOUT_SECONDS = 900  # 15分钟
@@ -365,6 +373,7 @@ async def http_get_task(task_id: str) -> dict:
 
 HEADER_X_RUN_ID = "x-run-id"
 @app.post("/run")
+@_langfuse_observe(name="visa-customer-/run")
 async def http_run(request: Request) -> Dict[str, Any]:
     global result
     raw_body = await request.body()
@@ -443,6 +452,12 @@ async def http_run(request: Request) -> Dict[str, Any]:
         )
     finally:
         cozeloop.flush()
+        # 短请求路径下主动 flush，避免进程退出前丢 span
+        if _langfuse_get_client is not None:
+            try:
+                _langfuse_get_client().flush()
+            except Exception:
+                logger.debug("langfuse flush skipped", exc_info=True)
 
 
 HEADER_X_WORKFLOW_STREAM_MODE = "x-workflow-stream-mode"
