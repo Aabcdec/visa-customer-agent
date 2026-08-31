@@ -13,5 +13,6 @@ bash scripts/http_run.sh -m http -p 5000
 # 黄金集评测（需服务已启动）
 # python eval/run.py --base-url http://127.0.0.1:5000
 
-# Langfuse：复制 .env.example → .env，填入 LANGFUSE_* 后重启服务
-
+# 环境变量
+# 复制 .env.example → .env，填写 DEEPSEEK_API_KEY（必填）、LANGFUSE_*（可选）、PGDATABASE_URL（可选）
+# 无 Coze 依赖：LLM 走 DeepSeek 直连（langchain-openai），知识库走本地 assets/*.md 关键词检索
