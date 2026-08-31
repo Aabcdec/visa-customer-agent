@@ -8,7 +8,7 @@
  * 3. 将本文件内容粘贴为入口代码（handler 选 handler，或按控制台要求改名）
  * 4. 环境变量增加：
  *      TOKEN = 扣子部署页的 Bearer（不要加 Bearer 前缀）
- *      UPSTREAM = https://5dq8j354gp.coze.site/run   （可选，已有默认）
+ *      UPSTREAM = http://127.0.0.1:5000/run   （可选，已有默认）
  * 5. 触发器：HTTP，公网访问，HTTPS
  * 6. 复制触发器地址，例如：
  *      https://xxx.cn-hangzhou.fcapp.run
@@ -19,7 +19,7 @@
  */
 
 const UPSTREAM =
-  process.env.UPSTREAM || "https://5dq8j354gp.coze.site/run";
+  process.env.UPSTREAM || "http://127.0.0.1:5000/run";
 
 function cors() {
   return {

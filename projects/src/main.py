@@ -26,6 +26,7 @@ from typing import Any, AsyncGenerator, Dict, Optional
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import StateGraph, END
@@ -131,6 +132,16 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+# CORS：允许任意来源，方便 H5 前端从静态托管/本地调试访问。
+# 上线时如只想放行特定域名，可把 allow_origins 改为具体列表。
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.get("/health")

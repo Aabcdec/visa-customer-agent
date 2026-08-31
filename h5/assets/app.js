@@ -1,6 +1,7 @@
 (() => {
-  const BAKED_VERSION = 3; // 升版本可强制丢弃本机旧设置
-  const REMOTE_API = "https://5dq8j354gp.coze.site/run";
+  const BAKED_VERSION = 4; // 升版本可强制丢弃本机旧设置（v4: 默认指向本地 Python 服务）
+  // 默认后端地址：与 config.example.js 保持一致，上线时只需改 config.js
+  const DEFAULT_API = "http://127.0.0.1:5000/run";
   const baked = window.VISA_H5_CONFIG || {};
   const STORAGE_KEY = "visa_h5_api_config_v1";
 
@@ -17,7 +18,7 @@
 
   function loadConfig() {
     const base = {
-      apiUrl: (baked.apiUrl || REMOTE_API).trim(),
+      apiUrl: (baked.apiUrl || DEFAULT_API).trim(),
       apiToken: (baked.apiToken || "").trim(),
       version: BAKED_VERSION,
     };
@@ -25,11 +26,12 @@
       const raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) return base;
       const saved = JSON.parse(raw);
-      // 版本过期或指向 coze.site / 空地址 → 强制用 config.js
+      // 版本过期或地址无效 → 回退到 config.js 配置
       if (
         saved.version !== BAKED_VERSION ||
         !saved.apiUrl ||
-        /coze\.site/i.test(saved.apiUrl)
+        saved.apiUrl.includes("REPLACE_ME") ||
+        saved.apiUrl.includes("YOUR_API_URL")
       ) {
         localStorage.removeItem(STORAGE_KEY);
         return base;
@@ -131,9 +133,9 @@
   async function callAgent(userMessage) {
     const url = (config.apiUrl || "").trim();
     const token = (config.apiToken || "").trim();
-    if (!url || url.includes("REPLACE_ME") || /coze\.site/i.test(url)) {
+    if (!url || url.includes("REPLACE_ME") || url.includes("YOUR_API_URL")) {
       throw new Error(
-        "当前 apiUrl 无效或仍指向 coze.site。请改用可访问的代理地址（国内建议阿里云 FC，见 proxy-cn/）。"
+        "当前 apiUrl 无效。请先在设置里填写后端地址（默认 http://127.0.0.1:5000/run），或确认 config.js 已正确配置。"
       );
     }
 
@@ -150,12 +152,11 @@
         body: JSON.stringify({ user_message: userMessage }),
       });
     } catch (err) {
-      const isWorkers = /workers\.dev/i.test(url);
       throw new Error(
         `Failed to fetch（请求未到达或被拦截）\n当前接口：${url}\n` +
-          (isWorkers
-            ? "国内常访问不了 *.workers.dev。请：①手机浏览器直接打开该 Worker 地址测通；②不通则改用阿里云函数代理（h5/proxy-cn/aliyun-fc.js）。"
-            : "请检查网络、是否用 https 打开页面、静态站是否已上传最新 config.js。") +
+          "请检查：①后端服务是否已启动（bash scripts/run_local_deepseek.sh）；" +
+          "②页面是否用 http/https 打开（file:// 下跨域会被拦）；" +
+          "③静态站是否已上传最新 config.js。" +
           `\n原始错误：${err && err.message ? err.message : err}`
       );
     }
@@ -249,6 +250,6 @@
   appendMessage(
     "system",
     `你好，我是签证客服助手。\n当前接口：${config.apiUrl}\n` +
-      "先用手机浏览器打开上面这个地址：能看到 ok 再回来提问；若打不开，说明代理在国内不可达，需换阿里云 FC（见 proxy-cn）。"
+      "如需更换后端地址，点右上角「设置」修改；上线部署时改 config.js 的 apiUrl 即可。"
   );
 })();

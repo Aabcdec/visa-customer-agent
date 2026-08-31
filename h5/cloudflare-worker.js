@@ -13,7 +13,7 @@
  * 本地预览也可用该 Worker 地址，无需 python。
  */
 
-const UPSTREAM = "https://5dq8j354gp.coze.site/run";
+const UPSTREAM = "http://127.0.0.1:5000/run";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
