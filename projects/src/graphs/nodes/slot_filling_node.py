@@ -69,6 +69,7 @@ def slot_filling_node(
             messages=messages,
             model=model_id,
             temperature=temperature,
+            top_p=llm_config.get("top_p", 0.7),
             max_completion_tokens=max_tokens
         )
 

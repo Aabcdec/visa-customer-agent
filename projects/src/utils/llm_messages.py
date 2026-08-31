@@ -1,8 +1,15 @@
-"""Coze LLMClient 消息构造：网关要求 role/content 纯文本，勿传带 name 的 Message 对象。"""
+"""LLM 消息构造：返回 LangChain BaseMessage 实例（SystemMessage/HumanMessage）。
+
+为什么：LLMClient 底层是 langchain-openai ChatOpenAI，stream() 要求 messages 中
+至少有一个 HumanMessage 实例（纯 dict 会触发 ValueError）。序列化时未设置 name
+字段，Coze 网关路径同样兼容（不会出现 GatewayErr: dict has no attribute 'name'）。
+"""
 from __future__ import annotations
 
 import json
-from typing import Any, List, Mapping
+from typing import Any, List
+
+from langchain_core.messages import HumanMessage, SystemMessage
 
 
 def ensure_text(value: Any) -> str:
@@ -32,14 +39,14 @@ def get_text_content(content: Any) -> str:
     return str(content)
 
 
-def build_chat_messages(system_prompt: Any, user_prompt: Any) -> List[Mapping[str, str]]:
+def build_chat_messages(system_prompt: Any, user_prompt: Any) -> List[Any]:
     """
-    构造 Coze LLMClient 可用的 messages。
+    构造 LLMClient 可用的 messages。
 
-    使用 OpenAI 风格 dict，避免 LangChain SystemMessage/HumanMessage 带 name
-    被序列化后触发 GatewayErr: dict has no attribute 'name'。
+    返回 SystemMessage/HumanMessage 实例（不带 name），本地 ChatOpenAI
+    直连与 Coze 网关两条路径均可用。
     """
     return [
-        {"role": "system", "content": ensure_text(system_prompt)},
-        {"role": "user", "content": ensure_text(user_prompt)},
+        SystemMessage(content=ensure_text(system_prompt)),
+        HumanMessage(content=ensure_text(user_prompt)),
     ]
