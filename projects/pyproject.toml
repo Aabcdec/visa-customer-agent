@@ -15,12 +15,9 @@ dependencies = [
     "uvicorn>=0.38,<1",
     "pydantic>=2.12,<3",
     "Jinja2>=3.1,<4",
-    "coze-coding-utils>=0.2.8,<1",
-    "coze-workload-identity>=0.1.4,<1",
     "opencv-python>=4.12,<5",
     "pandas>=2.2,<3",
     "Pillow>=10.3,<11",
-    "cozeloop>=0.1.25,<1",
     "alembic>=1.16,<2",
     "SQLAlchemy>=2.0,<3",
     "python-dotenv>=1.2,<2",
@@ -33,13 +30,8 @@ dependencies = [
     "docx2python>=3.5,<4",
     "openpyxl>=3.1,<4",
     "python-pptx>=1.0,<2",
-    "coze-coding-dev-sdk>0.5.0,<1",
     "rich>=14,<15",
     "chardet>=5.2,<6",
-    "pycairo==1.29.0",
-    # 以下两个为 Linux/GNOME 专属绑定，仅模板在 Linux devbox 需要；Windows 上无 wheel 无法编译，故加平台标记跳过
-    "dbus-python==1.3.2; sys_platform == 'linux'",
-    "PyGObject==3.48.2; sys_platform == 'linux'",
     "langfuse>=3.0,<4",
 ]
 

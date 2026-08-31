@@ -2,8 +2,8 @@
 import logging
 from langchain_core.runnables import RunnableConfig
 from langgraph.runtime import Runtime
-from coze_coding_utils.runtime_ctx.context import Context
-from coze_coding_dev_sdk import KnowledgeClient, Config
+from utils.context import Context
+from utils.knowledge import LocalKnowledgeClient
 from graphs.state import KnowledgeRetrievalInput, KnowledgeRetrievalOutput
 
 logger = logging.getLogger(__name__)
@@ -16,12 +16,13 @@ def knowledge_retrieval_node(
 ) -> KnowledgeRetrievalOutput:
     """
     title: 知识库检索
-    desc: 根据意图和已提取的关键信息（国家/签证类型），从知识库中语义检索签证信息。material意图会额外分析所需材料清单并输出缺失材料列表，实现"先槽位→再检索→列缺件"的流程。
+    desc: 根据意图和已提取的关键信息（国家/签证类型），从本地知识库（assets/*.md）检索签证信息。material意图会额外分析所需材料清单并输出缺失材料列表，实现"先槽位→再检索→列缺件"的流程。
     integrations: 知识库
     """
-    ctx = runtime.context
+    _ = runtime.context
 
-    # 构建检索query
+    # 构建检索query（只用结构化关键词，不拼原始 user_message：
+    # 本地关键词检索对整句/标点敏感，整句会稀释命中率）
     query_parts = []
     if state.country:
         query_parts.append(state.country)
@@ -31,8 +32,6 @@ def knowledge_retrieval_node(
         query_parts.append("材料清单")
     elif state.intent == "faq":
         query_parts.append("签证政策")
-    if state.user_message:
-        query_parts.append(state.user_message)
 
     # 去重并拼接
     seen = set()
@@ -46,12 +45,10 @@ def knowledge_retrieval_node(
     missing_slots = []
 
     try:
-        knowledge_config = Config()
-        knowledge_client = KnowledgeClient(config=knowledge_config, ctx=ctx)
-
+        knowledge_client = LocalKnowledgeClient()
         search_response = knowledge_client.search(
             query=query,
-            table_names=["visa_knowledge"],
+            table_names=["visa_knowledge", "material_checklist"],
             top_k=5,
             min_score=0.3
         )

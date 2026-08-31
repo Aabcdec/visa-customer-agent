@@ -2,7 +2,7 @@
 from langgraph.graph import StateGraph, END
 from langchain_core.runnables import RunnableConfig
 from langgraph.runtime import Runtime
-from coze_coding_utils.runtime_ctx.context import Context
+from utils.context import Context
 
 from graphs.state import (
     GlobalState,

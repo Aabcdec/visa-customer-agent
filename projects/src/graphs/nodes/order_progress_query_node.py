@@ -2,7 +2,7 @@
 import logging
 from langchain_core.runnables import RunnableConfig
 from langgraph.runtime import Runtime
-from coze_coding_utils.runtime_ctx.context import Context
+from utils.context import Context
 from tools.order_progress_tool import query_order_progress
 from graphs.state import OrderProgressInput, OrderProgressOutput
 

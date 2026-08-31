@@ -54,8 +54,11 @@ if [ -z "$mode" ]; then
 fi
 
 
-# Load environment variables
-if [ -f "${SCRIPT_DIR}/load_env.sh" ]; then
+# Load environment variables from .env
+if [ -f "${WORK_DIR}/.env" ]; then
+  echo "Loading environment variables from .env..."
+  set -a; source "${WORK_DIR}/.env"; set +a
+elif [ -f "${SCRIPT_DIR}/load_env.sh" ]; then
   echo "Loading environment variables..."
   source "${SCRIPT_DIR}/load_env.sh"
 fi

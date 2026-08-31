@@ -1,14 +1,20 @@
 #!/bin/bash
-# 启动签证客服 HTTP 服务（DeepSeek 直连模式）
+# 启动签证客服 HTTP 服务（DeepSeek 直连，无 Coze 依赖）
 cd "$(dirname "$0")/.." || exit 1
 
-# 从 Hermes .env 读取 DeepSeek key 注入 Coze SDK 兼容变量
-DEEPSEEK_KEY="$(grep -E '^DEEPSEEK_API_KEY=' "$HOME/AppData/Local/hermes/.env" | head -1 | cut -d= -f2- | tr -d '"' | tr -d "'" | tr -d '\r')"
-export COZE_WORKLOAD_IDENTITY_API_KEY="$DEEPSEEK_KEY"
-# LLMClient 实际用 MODEL_BASE_URL；BASE_URL 是 Config 初始化必填项（KnowledgeClient 用），统一指 DeepSeek
-export COZE_INTEGRATION_BASE_URL="https://api.deepseek.com"
-export COZE_INTEGRATION_MODEL_BASE_URL="https://api.deepseek.com"
-export PGDATABASE_URL="postgresql://postgres:123456@127.0.0.1:5432/postgres"
+# 从项目 .env 读取配置（DEEPSEEK_API_KEY 等）；不存在则读 Hermes 的 key 兜底
+if [ -f ".env" ]; then
+  set -a; source .env; set +a
+fi
+if [ -z "$DEEPSEEK_API_KEY" ] && [ -f "$HOME/AppData/Local/hermes/.env" ]; then
+  DEEPSEEK_KEY="$(grep -E '^DEEPSEEK_API_KEY=' "$HOME/AppData/Local/hermes/.env" | head -1 | cut -d= -f2- | tr -d '"' | tr -d "'" | tr -d '\r')"
+  export DEEPSEEK_API_KEY="$DEEPSEEK_KEY"
+fi
 
-echo "COZE_WORKLOAD_IDENTITY_API_KEY length: ${#DEEPSEEK_KEY}"
-exec .venv/Scripts/python.exe src/main.py -m http -p 5000
+# PG 数据库（可选：memory_saver 会自动退化到 MemorySaver）
+if [ -z "$PGDATABASE_URL" ]; then
+  export PGDATABASE_URL="postgresql://postgres:123456@127.0.0.1:5432/postgres"
+fi
+
+echo "DEEPSEEK_API_KEY length: ${#DEEPSEEK_API_KEY}"
+exec .venv/Scripts/python.exe src/main.py -m http -p "${PORT:-5000}"

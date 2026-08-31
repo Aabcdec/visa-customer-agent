@@ -30,6 +30,13 @@ done
 # 激活 .venv（devbox 环境），deploy 无 .venv 则跳过
 if [ -f "${WORK_DIR}/.venv/bin/activate" ]; then
   source "${WORK_DIR}/.venv/bin/activate"
+elif [ -f "${WORK_DIR}/.venv/Scripts/activate" ]; then
+  source "${WORK_DIR}/.venv/Scripts/activate"
+fi
+
+# 加载项目 .env（DEEPSEEK_API_KEY 等）
+if [ -f "${WORK_DIR}/.env" ]; then
+  set -a; source "${WORK_DIR}/.env"; set +a
 fi
 
 python ${WORK_DIR}/src/main.py -m http -p $PORT

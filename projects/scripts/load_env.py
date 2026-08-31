@@ -1,35 +1,41 @@
 #!/usr/bin/env python3
-"""
-加载项目环境变量脚本
-通过 coze_workload_identity.Client 获取项目环境变量并输出 export 语句
-使用方式: eval $(python load_env.py)
-"""
+"""加载项目环境变量 - 从项目 .env 文件读取并输出 export 语句。
 
+替代原 coze_workload_identity 实现：本地运行不再依赖 Coze 平台，
+环境变量统一从项目根目录的 .env 文件加载（也兼容系统环境变量覆盖）。
+用法: eval $(python load_env.py)
+"""
 import os
 import sys
+from pathlib import Path
 
-# 添加 app 目录到 Python 路径
-workspace_path = os.getenv("COZE_WORKSPACE_PATH", "/workspace/projects")
-app_dir = os.path.join(workspace_path, 'src')
-if app_dir not in sys.path:
-    sys.path.insert(0, app_dir)
 
-try:
-    from coze_workload_identity import Client
+def main() -> int:
+    # 项目根：本文件在 projects/scripts/ 下
+    project_root = Path(__file__).resolve().parents[1]
+    env_file = project_root / ".env"
 
-    client = Client()
-    env_vars = client.get_project_env_vars()
-    client.close()
+    if not env_file.exists():
+        print("# .env not found, using system environment only", file=sys.stderr)
+        return 0
 
-    # 输出 export 语句格式的环境变量
-    for env_var in env_vars:
-        # 转义特殊字符
-        value = env_var.value.replace("'", "'\\''")
-        print(f"export {env_var.key}='{value}'")
+    loaded = 0
+    for line in env_file.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        # 系统环境变量优先，不覆盖已有值
+        if key and key not in os.environ:
+            escaped = value.replace("'", "'\\''")
+            print(f"export {key}='{escaped}'")
+            loaded += 1
 
-    # 输出成功消息到 stderr，不影响 eval
-    print(f"# Successfully loaded {len(env_vars)} environment variables", file=sys.stderr)
+    print(f"# Successfully loaded {loaded} environment variables", file=sys.stderr)
+    return 0
 
-except Exception as e:
-    print(f"# Error loading environment variables: {e}", file=sys.stderr)
-    sys.exit(1)
+
+if __name__ == "__main__":
+    sys.exit(main())

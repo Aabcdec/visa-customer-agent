@@ -1,13 +1,16 @@
 """回复生成节点 - 强制只依据检索/插件结果，禁止瞎编"""
-import os
 import json
+from pathlib import Path
 from jinja2 import Template
 from langchain_core.runnables import RunnableConfig
 from langgraph.runtime import Runtime
-from coze_coding_utils.runtime_ctx.context import Context
-from coze_coding_dev_sdk import LLMClient
+from utils.context import Context
+from utils.llm import LLMClient
 from graphs.state import ResponseGenerateInput, ResponseGenerateOutput
 from utils.llm_messages import build_chat_messages, ensure_text, get_text_content
+
+# 项目根目录（src/graphs/nodes/ -> projects/）
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
 def response_generate_node(
@@ -22,8 +25,7 @@ def response_generate_node(
     """
     ctx = runtime.context
 
-    workspace_path = os.getenv("COZE_WORKSPACE_PATH", "")
-    cfg_file = os.path.join(workspace_path, config["metadata"]["llm_cfg"])
+    cfg_file = PROJECT_ROOT / config["metadata"]["llm_cfg"]
     with open(cfg_file, "r", encoding="utf-8") as fd:
         llm_cfg = json.load(fd)
 
