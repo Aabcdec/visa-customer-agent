@@ -69,6 +69,7 @@ CHECK_KEYS = frozenset(
         "expect_tool_called",
         "expect_order_valid",
         "expect_cites_retrieval",
+        "expect_knowledge_empty",
         "must_contain",
         "must_not_contain",
     }
@@ -82,6 +83,7 @@ _HANDOFF_KEY = "expect_handoff"
 _TOOL_KEY = "expect_tool_called"
 _ORDER_VALID_KEY = "expect_order_valid"
 _CITES_KEY = "expect_cites_retrieval"
+_KNOWLEDGE_EMPTY_KEY = "expect_knowledge_empty"
 
 # CI 默认门槛。离线(stub)模式下 intent 不做门禁——因为离线不测模型分类能力，
 # 只测"给定意图后，图是否守住了规则"，详见 offline_runner.py 的说明。
@@ -317,6 +319,21 @@ def evaluate_case(
         checks.append(CheckOutcome("cites_retrieval", ok, expected, got))
         if not ok:
             failures.append(f"cites_retrieval 期望={expected} 实际={got}")
+
+    # 只在结果里带 knowledge_context 时才断言（离线运行器会带，/run 的
+    # GraphOutput 不对外暴露该内部字段）。放在这里而不是让 live 模式假通过：
+    # 该模式下这条断言本就不适用，不参与判定比"默认算通过"更诚实。
+    if _KNOWLEDGE_EMPTY_KEY in case and "knowledge_context" in actual:
+        matched_expectation = True
+        expected = bool(case[_KNOWLEDGE_EMPTY_KEY])
+        got = not str(actual.get("knowledge_context") or "").strip()
+        ok = got == expected
+        checks.append(CheckOutcome("knowledge_empty", ok, expected, got))
+        if not ok:
+            failures.append(
+                f"knowledge_empty 期望={expected} 实际={got}"
+                f"（检索返回了 {len(str(actual.get('knowledge_context') or ''))} 字符）"
+            )
 
     reply = str(actual.get("final_reply") or "")
 

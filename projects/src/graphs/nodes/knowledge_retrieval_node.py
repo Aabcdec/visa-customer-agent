@@ -50,7 +50,12 @@ def knowledge_retrieval_node(
             query=query,
             table_names=["visa_knowledge", "material_checklist"],
             top_k=5,
-            min_score=0.3
+            min_score=0.3,
+            # 国别门控：用户指明的国家必须真的出现在文档里才允许作为回答依据。
+            # 为什么必须做：检索原先只看关键词重合，"火星"这类域外词虽然不在知识库中，
+            # 仍会命中别国的通用材料章节，系统于是拿日本签证的资料回答火星的问题。
+            # 加上门控后域外问题得到零依据，"不编造"由结构保证而不是靠模型自觉。
+            required_terms=[state.country] if state.country else None,
         )
 
         if search_response.code == 0 and search_response.chunks:

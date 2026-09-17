@@ -120,22 +120,61 @@ def test_medium_risk_requires_confirmation(fake_runtime) -> None:
     assert result.confirm_prompt
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "策略冲突（待产品决策）：「拒签」同时在 HIGH_RISK_KEYWORDS 和 "
-        "MEDIUM_RISK_KEYWORDS（'之前拒签'）里，且高风险优先，"
-        "导致中风险的'之前拒签'永远不可能命中。"
-        "被拒签是常见且合法的再申请场景，若一律转人工会淹没人工客服；"
-        "但它也确实需要更谨慎的处理。需业务方确认归到哪一档。"
-    ),
-)
 def test_previous_rejection_is_treated_as_medium_risk(fake_runtime) -> None:
-    """被拒签后重新申请，按 MEDIUM_RISK_KEYWORDS 的意图应走 confirm。"""
+    """被拒签后重新申请，按业务口径应落到中风险（confirm）而不是转人工。
+
+    背景：曾是一个 xfail 记录的策略冲突——「拒签」同时出现在高风险与中风险
+    关键词里，且高风险优先，导致中风险的「之前拒签」永远不可能命中。
+    现在把"拒签"从高风险降档到中风险。
+
+    为什么这样分档：被拒签是常见且合法的再申请场景，不是违规行为。
+    一律转人工会让人工坐席被可自动处理的咨询淹没；但它也确实比普通咨询更需要
+    谨慎口径（不能承诺结果），因此走"加强提示 + 用户确认"最合适。
+    而遣返、非法滞留、材料造假属于真实的移民违规/失信记录，仍保留在高风险。
+    """
     result = _run(fake_runtime, user_message="我之前拒签过，现在想再办日本签证", intent="faq")
 
     assert result.risk_level == "medium"
     assert result.flow_path == "confirm"
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "我之前拒签过，还能再申请吗",
+        "我被拒签了怎么办",
+        "我有一次拒签记录",
+        "上一本护照有拒签，会有影响吗",
+        "之前被拒过，想再试试",
+    ],
+)
+def test_rejection_variants_all_land_on_medium(fake_runtime, message: str) -> None:
+    """各种拒签说法都要落到中风险，不能因为措辞不同就漏判。"""
+    result = _run(fake_runtime, user_message=message, intent="faq")
+
+    assert result.risk_level == "medium"
+    assert result.flow_path == "confirm"
+    assert result.need_handoff is False
+
+
+def test_rejection_is_not_treated_as_high_risk(fake_runtime) -> None:
+    """被拒签绝不能升级为转人工——这是本次分档调整的核心断言。"""
+    result = _run(fake_runtime, user_message="我去年被拒签了，想重新申请", intent="faq")
+
+    assert result.risk_level != "high"
+    assert result.need_handoff is False
+
+
+@pytest.mark.parametrize(
+    "message",
+    ["我被遣返过", "我有过非法滞留记录", "我上了黑名单", "帮我伪造在职证明"],
+)
+def test_real_violations_still_escalate_to_high(fake_runtime, message: str) -> None:
+    """降档只针对"拒签"。真实的违规与失信记录必须继续转人工。"""
+    result = _run(fake_runtime, user_message=message, intent="faq")
+
+    assert result.risk_level == "high"
+    assert result.flow_path == "handoff"
 
 
 def test_rejected_before_phrasing_is_medium(fake_runtime) -> None:

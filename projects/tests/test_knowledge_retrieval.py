@@ -74,21 +74,115 @@ def test_unknown_table_is_ignored_not_crashed() -> None:
     assert response.chunks == []
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="已知缺口：当前无相关性门控，域外问题仍会召回通用片段",
-)
 def test_out_of_domain_query_returns_nothing() -> None:
     """域外问题（火星签证）不该命中任何知识片段。
 
-    当前实现在这里会失败——因为打分只看关键词重合，不看"这个国家是否存在"。
-    这正是"火星问题被拒答"这件事目前只能依赖模型判断、无法确定性验证的原因。
+    这条曾经是 xfail：打分只看关键词重合，不看"这个国家是否存在"，
+    所以"火星"仍会召回通用材料片段，导致拒答只能依赖模型判断。
+    现在由 required_terms 国别门控保证——见下方门控测试。
     """
     client = LocalKnowledgeClient()
 
-    response = client.search(query="火星 旅游签证 材料清单", min_score=0.3)
+    response = client.search(
+        query="火星 旅游签证 材料清单",
+        table_names=["visa_knowledge", "material_checklist"],
+        min_score=0.3,
+        required_terms=["火星"],
+    )
 
     assert response.chunks == []
+
+
+def test_search_without_required_terms_keeps_legacy_behaviour() -> None:
+    """不传 required_terms 时保持原行为（泛化问题仍有结果）。"""
+    client = LocalKnowledgeClient()
+
+    response = client.search(query="签证 材料", table_names=["material_checklist"], min_score=0.3)
+
+    assert response.chunks
+
+
+def test_required_terms_filters_out_sections_missing_the_country() -> None:
+    """门控语义：只要某节正文/标题里没有该国家名，就不允许作为依据。"""
+    client = LocalKnowledgeClient()
+
+    response = client.search(
+        query="日本 签证",
+        table_names=["visa_knowledge"],
+        min_score=0.3,
+        required_terms=["火星"],
+    )
+
+    assert response.chunks == []
+
+
+def test_required_terms_keeps_matching_country_sections() -> None:
+    client = LocalKnowledgeClient()
+
+    response = client.search(
+        query="日本 签证",
+        table_names=["visa_knowledge"],
+        min_score=0.3,
+        required_terms=["日本"],
+    )
+
+    assert response.chunks
+    assert all("日本" in chunk.content for chunk in response.chunks)
+
+
+def test_country_alias_is_normalised() -> None:
+    """口语简称（美签/日签/澳洲）要能归一化到知识库使用的正式名。"""
+    client = LocalKnowledgeClient()
+
+    response = client.search(
+        query="美签 面试",
+        table_names=["visa_knowledge"],
+        min_score=0.3,
+        required_terms=["美签"],
+    )
+
+    assert response.chunks
+    assert all("美国" in chunk.content for chunk in response.chunks)
+
+
+@pytest.mark.parametrize("country", ["法国", "德国", "意大利", "西班牙", "瑞士"])
+def test_schengen_member_maps_to_schengen_section(country: str) -> None:
+    """申根成员国的问题应命中"申根"章节，而不是被判成域外拒答。
+
+    这些国家共用同一套申根签证规则，知识库以"申根"统一收录；
+    不做映射会让"法国签证怎么办"这类正常提问被拒绝回答。
+    """
+    client = LocalKnowledgeClient()
+
+    response = client.search(
+        query=f"{country} 旅游签证 材料",
+        table_names=["visa_knowledge", "material_checklist"],
+        min_score=0.3,
+        required_terms=[country],
+    )
+
+    assert response.chunks, f"{country} 应命中申根章节"
+
+
+@pytest.mark.parametrize("country", ["爱尔兰", "英国"])
+def test_non_schengen_countries_are_not_mapped_to_schengen(country: str) -> None:
+    """爱尔兰不是申根国、英国有自己的体系，绝不能借用申根内容回答。"""
+    client = LocalKnowledgeClient()
+
+    response = client.search(
+        query=f"{country} 旅游签证",
+        table_names=["visa_knowledge"],
+        min_score=0.3,
+        required_terms=[country],
+    )
+
+    # 英国本身有独立章节，应命中英国内容而非申根；爱尔兰应零依据。
+    if country == "英国":
+        assert response.chunks
+        assert all("英国" in chunk.content for chunk in response.chunks)
+    else:
+        assert response.chunks == []
+
 
 
 # ========== 节点行为 ==========
@@ -150,3 +244,69 @@ def test_node_returns_empty_context_for_blank_input(fake_runtime) -> None:
 
     # 允许有限命中，但不能凭空生成内容：要么空，要么确实来自文档。
     assert isinstance(result.knowledge_context, str)
+
+
+# ========== 国别门控（节点层） ==========
+
+def test_node_returns_no_context_for_unknown_country(fake_runtime) -> None:
+    """域外国家必须检索不到任何内容——这是"不编造"的确定性前提。
+
+    为什么需要它：检索原先只按关键词重合打分，"火星"虽然不在知识库里，
+    但查询里的"签证""材料"等通用词仍能命中别的国家章节，于是系统会拿着
+    日本签证的资料回答火星签证的问题。门控把这种情况变成"零依据"。
+    """
+    state = KnowledgeRetrievalInput(
+        country="火星",
+        visa_type="旅游",
+        intent="faq",
+        user_message="火星旅游签证办理周期和材料要求是什么？",
+    )
+
+    result = knowledge_retrieval_node(state, {}, fake_runtime)
+
+    assert result.knowledge_context == ""
+
+
+def test_node_returns_no_materials_for_unknown_country(fake_runtime) -> None:
+    """域外国家也不该吐出材料清单，否则用户会拿到别国要求的材料。"""
+    state = KnowledgeRetrievalInput(
+        country="瓦坎达",
+        visa_type="旅游",
+        intent="material",
+        user_message="瓦坎达旅游签证要什么材料",
+    )
+
+    result = knowledge_retrieval_node(state, {}, fake_runtime)
+
+    assert result.knowledge_context == ""
+    assert result.required_materials == []
+
+
+def test_node_still_returns_context_for_known_country(fake_runtime) -> None:
+    """门控不能误伤正常国家——这是本次改动最需要防的回归。"""
+    state = KnowledgeRetrievalInput(
+        country="日本",
+        visa_type="旅游",
+        intent="faq",
+        user_message="日本旅游签证要办多久",
+    )
+
+    result = knowledge_retrieval_node(state, {}, fake_runtime)
+
+    assert result.knowledge_context
+    assert "日本" in result.knowledge_context
+
+
+@pytest.mark.parametrize("country", ["韩国", "泰国", "美国", "英国", "澳大利亚", "申根", "新加坡", "加拿大"])
+def test_gate_does_not_block_any_supported_country(fake_runtime, country: str) -> None:
+    """逐个覆盖知识库支持的全部国家，确认门控不会把合法国家挡掉。"""
+    state = KnowledgeRetrievalInput(
+        country=country,
+        visa_type="旅游",
+        intent="faq",
+        user_message=f"{country}旅游签证要办多久",
+    )
+
+    result = knowledge_retrieval_node(state, {}, fake_runtime)
+
+    assert result.knowledge_context, f"{country} 被门控误伤"

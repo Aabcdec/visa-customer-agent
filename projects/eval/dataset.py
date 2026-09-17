@@ -31,6 +31,7 @@ ALLOWED_EXPECTATION_KEYS = frozenset(
         "expect_tool_called",
         "expect_order_valid",
         "expect_cites_retrieval",
+        "expect_knowledge_empty",
         "must_contain",
         "must_not_contain",
     }
@@ -50,6 +51,7 @@ _BOOL_KEYS = frozenset(
         "expect_tool_called",
         "expect_order_valid",
         "expect_cites_retrieval",
+        "expect_knowledge_empty",
         "requires_llm",
     }
 )

@@ -31,6 +31,86 @@ DEFAULT_TABLES: Dict[str, str] = {
     "risk_policy": "assets/risk_policy.md",
 }
 
+# 国别别名 -> 知识库使用的正式写法。
+#
+# 为什么需要：门控的判据是"该国家名是否真的出现在文档里"，而用户/模型可能给出
+# 口语简称（美签、澳洲）。不归一化就会把合法国家误判成域外，把能答的问题拒掉。
+COUNTRY_ALIASES: Dict[str, str] = {
+    "美签": "美国",
+    "日签": "日本",
+    "韩签": "韩国",
+    "英签": "英国",
+    "澳洲": "澳大利亚",
+    "申根国": "申根",
+    "申根国家": "申根",
+    "欧洲": "申根",
+    # 申根成员国：这些国家共用同一套申根签证规则，知识库以"申根"统一收录。
+    # 不做映射会让"法国签证怎么办"被判成域外而拒答，属于不必要的误拒。
+    # 注意：爱尔兰不是申根国、英国有自己的签证体系，二者都不能映射。
+    "法国": "申根",
+    "德国": "申根",
+    "意大利": "申根",
+    "西班牙": "申根",
+    "荷兰": "申根",
+    "瑞士": "申根",
+    "瑞典": "申根",
+    "挪威": "申根",
+    "丹麦": "申根",
+    "芬兰": "申根",
+    "葡萄牙": "申根",
+    "希腊": "申根",
+    "比利时": "申根",
+    "奥地利": "申根",
+    "冰岛": "申根",
+    "卢森堡": "申根",
+    "波兰": "申根",
+    "捷克": "申根",
+    "匈牙利": "申根",
+}
+
+# 单个术语的匹配用不区分大小写（中文不受影响，但兼容英文字段如 DS-160）
+# 按长度倒序，保证长别名先替换：
+# 否则"申根国家"会先被"申根国"命中，替换成"申根家"这种残缺词。
+_ALIAS_PAIRS_LONGEST_FIRST = sorted(COUNTRY_ALIASES.items(), key=lambda kv: -len(kv[0]))
+
+
+def _apply_aliases(text: str) -> str:
+    """把文本里的国别口语简称替换为知识库使用的正式写法。
+
+    查询串与门控术语都必须走这一步：门控把"美签"归一化成"美国"后能选中章节，
+    但如果查询串仍写着"美签"，打分阶段就因关键词不匹配而拿不到分，
+    结果依然检索不到——两边必须用同一套归一化。
+    """
+    result = text
+    for alias, canonical in _ALIAS_PAIRS_LONGEST_FIRST:
+        if alias in result:
+            result = result.replace(alias, canonical)
+    return result
+
+
+def _normalize_terms(terms: Optional[List[str]]) -> List[str]:
+    """把国别术语归一化为知识库里的正式写法，并去重去空。"""
+    normalized: List[str] = []
+    for term in terms or []:
+        if not term:
+            continue
+        canonical = _apply_aliases(term.strip())
+        if canonical and canonical not in normalized:
+            normalized.append(canonical)
+    return normalized
+
+
+def _section_contains_all_terms(section: Dict[str, Any], terms: List[str]) -> bool:
+    """判断某个文档节是否同时包含全部必需术语（大小写不敏感）。
+
+    用"同时包含全部"而不是"包含任一"：查询里若同时出现国家和主题词，
+    只有两者都命中的章节才是真正相关的依据。
+    """
+    if not terms:
+        return True
+    haystack = f"{section.get('title', '')}\n{section.get('content', '')}".lower()
+    return all(term.lower() in haystack for term in terms)
+
 
 @dataclass
 class Chunk:
@@ -137,19 +217,38 @@ class LocalKnowledgeClient:
         table_names: Optional[List[str]] = None,
         top_k: int = 5,
         min_score: float = 0.3,
+        required_terms: Optional[List[str]] = None,
         **_: Any,
     ) -> SearchResponse:
-        """关键词检索：对每个文档节按查询词命中打分，返回 top_k。"""
+        """关键词检索：对每个文档节按查询词命中打分，返回 top_k。
+
+        参数:
+            required_terms: 必须出现在文档节里的术语（通常是国家名）。
+                这是"域外问题门控"：知识库只覆盖有限国家，但关键词打分不看
+                "这个实体是否存在"，导致"火星签证"会命中别国的通用材料章节，
+                系统于是拿着日本签证的资料回答火星的问题。
+
+                加上门控后，域外问题会得到零依据——"不编造"从"靠模型自觉"
+                变成"结构上做不到"。不传该参数时保持原有行为。
+        """
         if not query or not query.strip():
             return SearchResponse(code=0, chunks=[])
 
         tables = table_names or list(self._table_files.keys())
-        query_lower = query.lower()
-        query_terms = _extract_keywords(query)
+        # 查询串与门控术语共用同一套别名归一化，避免"门控选中了章节、
+        # 打分却因简称不匹配拿不到分"这种自相矛盾的结果。
+        normalized_query = _apply_aliases(query)
+        query_lower = normalized_query.lower()
+        query_terms = _extract_keywords(normalized_query)
+        must_have = _normalize_terms(required_terms)
 
         scored: List[Chunk] = []
         for table in tables:
             for section in self._load_table(table):
+                # 门控前置：不满足必需术语的章节直接不参与打分，
+                # 避免它靠通用词（"签证""材料"）拿到虚高分数。
+                if not _section_contains_all_terms(section, must_have):
+                    continue
                 score = _score_section(section, query_lower, query_terms)
                 if score >= min_score:
                     content = f"【{section['title']}】\n{section['content']}"

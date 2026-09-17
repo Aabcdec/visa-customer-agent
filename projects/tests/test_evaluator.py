@@ -68,6 +68,37 @@ def test_detect_refusal_true_for_handoff_flow_even_without_flag() -> None:
     assert detect_refusal(payload) is True
 
 
+def test_evaluate_case_checks_knowledge_empty_expectation() -> None:
+    """expect_knowledge_empty 用于验证"域外问题检索零依据"这一确定性契约。"""
+    case = {"id": "gate", "user_message": "越南签证怎么办", "expect_knowledge_empty": True}
+
+    passed_result = evaluate_case(case, _actual(knowledge_context=""))
+    failed_result = evaluate_case(case, _actual(knowledge_context="【日本签证】..."))
+
+    assert passed_result.passed is True
+    assert failed_result.passed is False
+    assert any("knowledge_empty" in failure for failure in failed_result.failures)
+
+
+def test_knowledge_empty_is_skipped_when_payload_lacks_context() -> None:
+    """线上 /run 不返回 knowledge_context，此时该断言不适用，不能算通过也不能算失败。
+
+    用 expect_intent 作为"匹配到了期望字段"的锚点，确认没有触发
+    "用例没有任何可判定的期望字段"的兜底失败。
+    """
+    case = {
+        "id": "live-view",
+        "user_message": "越南签证怎么办",
+        "expect_intent": "faq",
+        "expect_knowledge_empty": True,
+    }
+
+    result = evaluate_case(case, {"intent": "faq", "final_reply": "暂未查询到"})
+
+    assert result.passed is True
+    assert all(check.name != "knowledge_empty" for check in result.checks)
+
+
 def test_detect_cites_retrieval_false_when_no_results() -> None:
     """回复明确说明"未查询到"时，不应被记成引用了检索结果。"""
     payload = {"final_reply": "很抱歉，暂未查询到相关签证信息。"}

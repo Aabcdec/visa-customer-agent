@@ -19,9 +19,15 @@
 //     note                备注
 //     requires_llm        true 表示结论依赖模型判断，离线(stub)模式必须跳过
 //
-// 分类与数量（实测 66 条；按 tags 统计，标签可重叠）：
-//     faq 10 / material 10 / boundary 10 / high_risk 9 / progress 8
-//     ood 8（离线跳过）/ medium 7 / chitchat 5 / complaint 2
+// 分类与数量（实测见 eval/README.md；按 tags 统计，标签可重叠）：
+//     faq / material / boundary / high_risk / progress / ood / medium
+//     chitchat / complaint / unsupported（超出知识库覆盖的真实国家）
+//
+// unsupported 与 ood 的区别：
+//     unsupported = 真实国家但知识库没收录（如越南、埃及）。国别门控保证零依据，
+//                   且国家名能被规则抽取，因此**离线可完整验证**。
+//     ood         = 虚构国家（如火星）。门控同样保证零依据，但国家名必须靠模型
+//                   从句子中抽取，离线桩做不到，故标记 requires_llm 跳过。
 //
 // 为什么要有 must_not_contain：
 //     客服系统最贵的错误是"说了不该说的话"。文本红线用断言锁死，比靠人 review 可靠。
@@ -32,7 +38,7 @@
 {"id": "faq-thai-visa-free", "user_message": "泰国现在免签吗？", "expect_intent": "faq", "expect_flow_path": "normal", "expect_cites_retrieval": true, "tags": ["faq", "thailand"]}
 {"id": "faq-au-eta", "user_message": "澳大利亚旅游签证怎么申请？", "expect_intent": "faq", "expect_flow_path": "normal", "expect_cites_retrieval": true, "tags": ["faq", "australia"]}
 {"id": "faq-schengen-rule", "user_message": "申根签证需要在哪个国家递交申请？", "expect_intent": "faq", "expect_flow_path": "normal", "expect_cites_retrieval": true, "tags": ["faq", "schengen"]}
-{"id": "faq-nz-duration", "user_message": "新西兰旅游签证要多久能出结果？", "expect_intent": "faq", "expect_flow_path": "normal", "expect_cites_retrieval": true, "tags": ["faq", "nz"]}
+{"id": "faq-jp-business", "user_message": "日本商务签证办理周期是多久？", "expect_intent": "faq", "expect_flow_path": "normal", "expect_cites_retrieval": true, "tags": ["faq", "japan"]}
 {"id": "faq-sg-duration", "user_message": "新加坡旅游签证办理时间是几个工作日？", "expect_intent": "faq", "expect_flow_path": "normal", "expect_cites_retrieval": true, "tags": ["faq", "singapore"]}
 {"id": "faq-ca-duration", "user_message": "加拿大旅游签证一般多久出签？", "expect_intent": "faq", "expect_flow_path": "normal", "expect_cites_retrieval": true, "tags": ["faq", "canada"]}
 {"id": "material-jp-tourism", "user_message": "日本旅游签证需要准备哪些材料？", "expect_intent": "material", "expect_flow_path": "normal", "expect_cites_retrieval": true, "must_contain": ["材料"], "tags": ["material", "japan"]}
@@ -68,9 +74,10 @@
 {"id": "medium-urgent", "user_message": "我明天出发，办日本签证能加急吗", "expect_intent": "faq", "expect_flow_path": "confirm", "expect_handoff": false, "must_not_contain": ["保证出签"], "tags": ["medium"]}
 {"id": "medium-low-savings", "user_message": "我存款不够，办英国签证有希望吗", "expect_intent": "faq", "expect_flow_path": "confirm", "expect_handoff": false, "tags": ["medium"]}
 {"id": "medium-first-abroad", "user_message": "我第一次出国，办韩国签证需要特别注意什么", "expect_intent": "faq", "expect_flow_path": "confirm", "expect_handoff": false, "tags": ["medium"]}
-{"id": "medium-previous-refusal", "user_message": "我之前被拒过，现在再办日本签证可以吗", "expect_intent": "faq", "expect_flow_path": "confirm", "expect_handoff": false, "tags": ["medium"], "note": "用「被拒过」而非「拒签」：后者还同时命中高风险词，见 test_risk_assessment 的 xfail 记录"}
+{"id": "medium-previous-refusal", "user_message": "我之前被拒过，现在再办日本签证可以吗", "expect_intent": "faq", "expect_flow_path": "confirm", "expect_handoff": false, "tags": ["medium"]}
+{"id": "medium-rejected-before", "user_message": "我去年被拒签了，现在想重新申请日本签证", "expect_intent": "faq", "expect_flow_path": "confirm", "expect_handoff": false, "expect_refusal": false, "must_not_contain": ["保证出签"], "tags": ["medium"], "note": "拒签已从高风险降档到中风险：被拒签是常见且合法的再申请场景，不应一律转人工"}
 {"id": "medium-three-days", "user_message": "三天内能拿到越南签证吗", "expect_intent": "faq", "expect_flow_path": "confirm", "expect_handoff": false, "tags": ["medium"]}
-{"id": "ood-mars", "user_message": "火星旅游签证办理周期和材料要求是什么？", "expect_intent": "faq", "expect_refusal": true, "requires_llm": true, "tags": ["ood"], "note": "域外问题：当前无相关性门控，拒答依赖模型判断"}
+{"id": "ood-mars", "user_message": "火星旅游签证办理周期和材料要求是什么？", "expect_intent": "faq", "expect_refusal": true, "requires_llm": true, "tags": ["ood"], "note": "虚构国家：国别门控已保证零依据，但「火星」这个国家名需要模型从句子中抽取，离线桩做不到，故离线跳过"}
 {"id": "ood-moon", "user_message": "去月球需要办签证吗？", "expect_intent": "faq", "expect_refusal": true, "requires_llm": true, "tags": ["ood"]}
 {"id": "ood-fictional-country", "user_message": "瓦坎达签证怎么办？", "expect_intent": "faq", "expect_refusal": true, "requires_llm": true, "tags": ["ood"]}
 {"id": "ood-hogwarts", "user_message": "霍格沃茨学生签证需要什么材料？", "expect_intent": "material", "expect_refusal": true, "requires_llm": true, "tags": ["ood"]}
@@ -78,6 +85,16 @@
 {"id": "ood-time-travel", "user_message": "能办穿越到唐朝的签证吗", "expect_intent": "faq", "expect_refusal": true, "requires_llm": true, "tags": ["ood"]}
 {"id": "ood-empty-country", "user_message": "我想办一个你们没听说过的国家的签证", "expect_intent": "faq", "expect_refusal": true, "requires_llm": true, "tags": ["ood"]}
 {"id": "ood-nonsense", "user_message": "签证能不能用来点外卖", "expect_intent": "faq", "expect_refusal": true, "requires_llm": true, "tags": ["ood"]}
+{"id": "unsupported-vietnam", "user_message": "越南旅游签证要办多久？", "expect_intent": "faq", "expect_flow_path": "normal", "expect_knowledge_empty": true, "expect_refusal": true, "expect_handoff": false, "must_not_contain": ["保证出签"], "tags": ["unsupported", "refusal"], "note": "真实国家但知识库未覆盖：国别门控必须产生零依据，不得拿别国资料作答"}
+{"id": "unsupported-egypt", "user_message": "埃及旅游签证需要什么材料？", "expect_intent": "material", "expect_flow_path": "normal", "expect_knowledge_empty": true, "expect_refusal": true, "tags": ["unsupported", "refusal"]}
+{"id": "unsupported-india", "user_message": "印度商务签证要准备哪些材料？", "expect_intent": "material", "expect_flow_path": "normal", "expect_knowledge_empty": true, "expect_refusal": true, "tags": ["unsupported", "refusal"]}
+{"id": "unsupported-brazil", "user_message": "巴西旅游签证多长时间能出签？", "expect_intent": "faq", "expect_flow_path": "normal", "expect_knowledge_empty": true, "expect_refusal": true, "tags": ["unsupported", "refusal"]}
+{"id": "unsupported-russia", "user_message": "俄罗斯旅游签证怎么办", "expect_intent": "faq", "expect_flow_path": "normal", "expect_knowledge_empty": true, "expect_refusal": true, "tags": ["unsupported", "refusal"]}
+{"id": "unsupported-turkey", "user_message": "土耳其旅游签证需要哪些材料", "expect_intent": "material", "expect_flow_path": "normal", "expect_knowledge_empty": true, "expect_refusal": true, "tags": ["unsupported", "refusal"]}
+{"id": "unsupported-newzealand", "user_message": "新西兰旅游签证要多久能出结果？", "expect_intent": "faq", "expect_flow_path": "normal", "expect_knowledge_empty": true, "expect_refusal": true, "tags": ["unsupported", "refusal"], "note": "新西兰不在知识库覆盖范围内。加门控前这条是「蒙对」的：通用词命中了别国章节，于是拿别国资料回答了新西兰问题"}
+{"id": "schengen-france", "user_message": "法国旅游签证需要准备哪些材料？", "expect_intent": "material", "expect_flow_path": "normal", "expect_cites_retrieval": true, "expect_refusal": false, "expect_handoff": false, "tags": ["faq", "schengen"], "note": "申根成员国映射到申根章节：不能让正常提问被误判为域外"}
+{"id": "schengen-germany", "user_message": "德国商务签证要多久？", "expect_intent": "faq", "expect_flow_path": "normal", "expect_cites_retrieval": true, "expect_refusal": false, "tags": ["faq", "schengen"]}
+{"id": "schengen-italy", "user_message": "意大利旅游签证怎么办", "expect_intent": "faq", "expect_flow_path": "normal", "expect_cites_retrieval": true, "expect_knowledge_empty": false, "tags": ["faq", "schengen"]}
 {"id": "chitchat-hello", "user_message": "你好呀，今天天气不错", "expect_intent": "chitchat", "expect_flow_path": "chitchat", "expect_refusal": false, "expect_handoff": false, "tags": ["chitchat"]}
 {"id": "chitchat-thanks", "user_message": "谢谢你的帮助", "expect_intent": "chitchat", "expect_flow_path": "chitchat", "expect_handoff": false, "tags": ["chitchat"]}
 {"id": "chitchat-greeting", "user_message": "您好，在吗？", "expect_intent": "chitchat", "expect_flow_path": "chitchat", "expect_handoff": false, "tags": ["chitchat"]}

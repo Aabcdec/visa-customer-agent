@@ -5,7 +5,7 @@
 ```bash
 cd projects
 
-# 全量测试
+# 全量测试（198 项）
 python -m pytest -q
 
 # 单个文件
@@ -13,9 +13,6 @@ python -m pytest tests/test_risk_assessment.py -v
 
 # 只跑与风控有关的用例
 python -m pytest -k risk -q
-
-# 显示被标记为"已知缺口"的用例
-python -m pytest -q -rx
 ```
 
 > 也可以 `uv run pytest -q`。本机 Git Bash 下 `uv run` 偶发
@@ -40,28 +37,26 @@ python -m pytest -q -rx
 
 | 文件 | 保护的东西 |
 |---|---|
-| `test_risk_assessment.py` | 高风险必转人工、中风险需确认、`flow_path` 优先级、**知识库正文不得触发风控** |
+| `test_risk_assessment.py` | 高风险必转人工、中风险需确认、`flow_path` 优先级、**知识库正文不得触发风控**、拒签降档为中风险 |
 | `test_order_validation.py` | 整句提取订单号、格式校验、缺失时追问 |
 | `test_order_progress.py` | 查不到**不编造**进度、插件异常兜底、Mock 数据字段完整 |
-| `test_knowledge_retrieval.py` | 命中/不命中、阈值、排序、按结构化关键词拼查询 |
+| `test_knowledge_retrieval.py` | **国别门控**、别名归一化、申根映射、命中/阈值/排序 |
 | `test_complaint_handoff.py` | 固定话术、必转人工、摘要含意图/国家/原话 |
 | `test_graph_routing.py` | 三层路由函数、图结构、五类意图的端到端 `flow_path` |
 | `test_api_contract.py` | `/health`、`/graph_parameter`、错误码、CORS |
+| `test_langfuse_trace.py` | 可观测性降级契约：未配密钥不阻断业务、异常不击穿主链路 |
 | `test_dataset.py` | 评测集字段白名单、重复 id、假通过用例 |
 | `test_evaluator.py` | 指标口径、精确率/召回率、`None` 语义、报告渲染 |
 | `test_offline_runner.py` | 规则兜底意图、离线跑图、桩的还原 |
 
-## 关于 `xfail(strict=True)`
+## 关于"已知缺口"的处理方式
 
-有两处已知缺口用 `xfail(strict=True)` 显式记录，而不是删掉断言或静默跳过：
+曾经用 `xfail(strict=True)` 记录两处缺口（域外问题无相关性门控、「拒签」高/中风险
+策略冲突）。两处都已真正修好，`xfail` 标记也随之移除——**现在测试套件里没有 xfail**，
+全绿即全通过。
 
-1. `test_out_of_domain_query_returns_nothing` — 域外问题缺少相关性门控
-2. `test_previous_rejection_is_treated_as_medium_risk` — 「拒签」的高/中风险策略冲突
-
-`strict=True` 的含义：**如果哪天有人修好了，测试会立刻失败**，逼着把标记改成正常断言。
-这样"已知缺口"不会烂在那里被遗忘。
-
-用 `-rx` 可以看到它们的 xfail 原因。
+保留下来的经验：`strict=True` 的价值在于"修好后会立刻失败、逼你摘掉标记"，
+比在注释里写 TODO 可靠得多。以后再遇到"知道有问题但这轮不修"的情况，继续用它。
 
 ## 写新测试时的约定
 
