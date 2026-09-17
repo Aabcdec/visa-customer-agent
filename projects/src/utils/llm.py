@@ -28,6 +28,8 @@ class LLMClient:
 
     def __init__(self, ctx: Any = None) -> None:
         self.ctx = ctx
+        # API Key 只能来自环境变量，绝不能提供代码级默认值。
+        # 否则密钥会跟随 Git 历史永久泄露，且所有开发者不知情地共用同一凭据。
         self.api_key = os.getenv("DEEPSEEK_API_KEY", "")
         self.base_url = os.getenv("DEEPSEEK_BASE_URL", DEFAULT_BASE_URL)
         if not self.api_key:

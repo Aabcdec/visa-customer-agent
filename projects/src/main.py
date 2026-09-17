@@ -18,11 +18,20 @@ import asyncio
 import inspect
 import json
 import logging
+import os
 import time
 import traceback
 import uuid
 from contextlib import asynccontextmanager
 from typing import Any, AsyncGenerator, Dict, Optional
+
+# 加载项目 .env（DEEPSEEK_API_KEY / LANGFUSE_* / PGDATABASE_URL）
+# 必须在 import langfuse 之前执行，否则 client 初始化时读不到密钥
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
+except Exception:
+    pass
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
@@ -33,15 +42,14 @@ from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
 
 from utils.context import Context, new_context
+from utils.langfuse_trace import (
+    observe,  # noqa: F401  # @observe 装饰器（未配置时降级为空操作）
+    langfuse_available,
+    get_langfuse_callback,
+    LangfuseTraceContext,
+    langfuse_flush,
+)
 from graphs.graph import main_graph
-
-# Langfuse 追踪（密钥用环境变量 LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY / LANGFUSE_BASE_URL）
-try:
-    from langfuse import get_client as _langfuse_get_client
-    from langfuse import observe as _langfuse_observe
-except ImportError:  # 未安装 langfuse 时仍可本地跑通，不阻断 /run
-    _langfuse_get_client = None
-    _langfuse_observe = lambda **_kw: (lambda f: f)  # noqa: E731
 
 logging.basicConfig(
     level=logging.INFO,
@@ -106,8 +114,16 @@ def _find_node_func(node_id: str):
 
 
 async def _run_graph(payload: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
-    """同步运行整张图。"""
+    """同步运行整张图。
+
+    Langfuse 集成：若已配置，将 CallbackHandler 注入 run config，
+    使 LangGraph 内部的 LLM generation 自动生成嵌套 span
+    （含模型名、token 用量），并传播 session_id/tags 到 trace 根。
+    """
     config = _run_config(ctx)
+    langfuse_handler = get_langfuse_callback()
+    if langfuse_handler is not None:
+        config.setdefault("callbacks", []).append(langfuse_handler)
     try:
         result = await main_graph.ainvoke(payload, config=config, context=ctx)
     except asyncio.CancelledError:
@@ -165,7 +181,7 @@ async def http_graph_inout_parameter():
 
 
 @app.post("/run")
-@_langfuse_observe(name="visa-customer-/run")
+@observe(name="visa-customer-/run")
 async def http_run(request: Request) -> Dict[str, Any]:
     ctx = _resolve_ctx("run", request)
     raw_body = await request.body()
@@ -181,11 +197,35 @@ async def http_run(request: Request) -> Dict[str, Any]:
     except json.JSONDecodeError as e:
         raise HTTPException(status_code=400, detail=f"Invalid JSON format: {e}")
 
-    task = asyncio.create_task(_run_graph(payload, ctx))
-    running_tasks[ctx.run_id] = task
+    # trace 根属性：以 run_id 作为 session_id 分组，便于在 Langfuse Sessions 视图查看
+    trace_tags = ["visa-customer", "run"]
+    intent = payload.get("intent") or ""
+    if intent:
+        trace_tags.append(f"intent:{intent}")
 
+    # 显式设置 trace 根 input：@observe 会把 FastAPI Request 序列化成空 dict，
+    # 用户消息必须手动写入，否则 Langfuse trace 列表看不到请求内容。
+    if langfuse_available():
+        try:
+            from langfuse import get_client as _lf_client
+            _lf_client().update_current_span(
+                input={"user_message": payload.get("user_message", "")}
+            )
+        except Exception:
+            logger.debug("langfuse set trace input skipped", exc_info=True)
+
+    # 注意：create_task 必须在 LangfuseTraceContext 块内执行，
+    # 这样 contextvars 中的 trace 属性（session_id/tags）才能传播进
+    # _run_graph 里创建的 CallbackHandler。
     try:
-        result = await asyncio.wait_for(task, timeout=float(TIMEOUT_SECONDS))
+        with LangfuseTraceContext(
+            "visa-customer-/run",
+            session_id=ctx.run_id,
+            tags=trace_tags,
+        ):
+            task = asyncio.create_task(_run_graph(payload, ctx))
+            running_tasks[ctx.run_id] = task
+            result = await asyncio.wait_for(task, timeout=float(TIMEOUT_SECONDS))
     except asyncio.TimeoutError:
         logger.error(f"Run execution timeout after {TIMEOUT_SECONDS}s for run_id: {ctx.run_id}")
         task.cancel()
@@ -202,11 +242,21 @@ async def http_run(request: Request) -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         running_tasks.pop(ctx.run_id, None)
-        if _langfuse_get_client is not None:
+        # 显式写 trace 根 output（final_reply），与 input 对应
+        if langfuse_available() and isinstance(result, dict):
             try:
-                _langfuse_get_client().flush()
+                from langfuse import get_client as _lf_client
+                _lf_client().update_current_span(
+                    output={
+                        "final_reply": result.get("final_reply", ""),
+                        "intent": result.get("intent", ""),
+                        "flow_path": result.get("flow_path", ""),
+                        "need_handoff": result.get("need_handoff", False),
+                    }
+                )
             except Exception:
-                logger.debug("langfuse flush skipped", exc_info=True)
+                logger.debug("langfuse set trace output skipped", exc_info=True)
+        langfuse_flush()
 
     return result
 
