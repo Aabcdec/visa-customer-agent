@@ -38,6 +38,7 @@ python -m pytest -k risk -q
 | 文件 | 保护的东西 |
 |---|---|
 | `test_risk_assessment.py` | 高风险必转人工、中风险需确认、`flow_path` 优先级、**知识库正文不得触发风控**、拒签降档为中风险 |
+| `test_risk_keyword_config.py` | **配置一致性**：高/中风险关键词不得同词、不得子串遮蔽；违规类必须留高风险 |
 | `test_order_validation.py` | 整句提取订单号、格式校验、缺失时追问 |
 | `test_order_progress.py` | 查不到**不编造**进度、插件异常兜底、Mock 数据字段完整 |
 | `test_knowledge_retrieval.py` | **国别门控**、别名归一化、申根映射、命中/阈值/排序 |
