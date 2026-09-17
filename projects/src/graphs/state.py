@@ -9,7 +9,11 @@ class GlobalState(BaseModel):
     country: str = Field(default="", description="目标国家")
     visa_type: str = Field(default="", description="签证类型")
     intent: str = Field(default="", description="用户意图: faq/material/progress/complaint/chitchat")
-    missing_slots: List[str] = Field(default=[], description="缺失的必填信息槽位或所需材料列表")
+    missing_slots: List[str] = Field(default=[], description="缺失的必填信息槽位（决定是否追问，只由 slot_filling 写入）")
+    required_materials: List[str] = Field(
+        default=[],
+        description="material意图检索到的所需材料清单（只用于展示给模型，不决定流程）",
+    )
     risk_level: str = Field(default="low", description="风险等级: low/medium/high")
     order_id: str = Field(default="", description="签证订单号")
     handoff_reason: str = Field(default="", description="转人工原因，为空表示无需转人工")
@@ -36,12 +40,23 @@ class GraphInput(BaseModel):
 
 
 class GraphOutput(BaseModel):
-    """工作流的输出"""
+    """工作流的输出。
+
+    注意：这里是图对外的**唯一**出口，不在其中的状态字段会被 LangGraph 裁掉。
+    新增字段前先想清楚"外部谁在依赖它"——漏掉字段不会报错，只会让前端或评测
+    静默拿到 undefined（flow_path 就曾经被漏掉，导致前端路径标签成为死代码）。
+    """
     final_reply: str = Field(..., description="给用户的最终回复内容")
     need_handoff: bool = Field(default=False, description="是否需要转人工客服")
     handoff_reason: str = Field(default="", description="转人工原因")
     intent: str = Field(default="", description="识别到的用户意图")
     risk_level: str = Field(default="low", description="风险评估等级")
+    # flow_path 必须对外暴露：H5 用它渲染"路径"标签与 confirm/handoff 样式，
+    # 线上评测也用它验证路由是否走对（仅靠回复文本猜路径不可靠）。
+    flow_path: str = Field(
+        default="",
+        description="流程路径: ask/confirm/normal/handoff/chitchat",
+    )
 
 
 # ========== 意图分类节点 ==========
@@ -122,9 +137,16 @@ class KnowledgeRetrievalInput(BaseModel):
 
 
 class KnowledgeRetrievalOutput(BaseModel):
-    """知识库检索节点的输出"""
+    """知识库检索节点的输出。
+
+    注意：这里刻意**不叫** missing_slots。
+    "缺失的必填槽位"决定流程是否追问（ask），而"所需材料清单"只是给模型看的参考资料。
+    两者曾经共用一个字段，导致用户问"日本旅游签证要什么材料"时，材料清单被当成
+    "还缺信息"从而路由成 ask，用户拿不到答案。语义必须分开。
+    """
+
     knowledge_context: str = Field(..., description="从知识库检索到的相关信息")
-    missing_slots: List[str] = Field(default=[], description="material意图：所需但缺失的材料清单")
+    required_materials: List[str] = Field(default=[], description="material意图：该签证类型的所需材料清单")
 
 
 # ========== 风险门控节点 ==========
@@ -182,6 +204,7 @@ class ResponseGenerateInput(BaseModel):
     risk_level: str = Field(default="low", description="风险等级")
     risk_advice: str = Field(default="", description="风险建议")
     missing_slots: List[str] = Field(default=[], description="缺失槽位或所需材料")
+    required_materials: List[str] = Field(default=[], description="material意图：所需材料清单")
     slot_follow_up: str = Field(default="", description="槽位追问话术")
     need_handoff: bool = Field(default=False, description="是否需要转人工")
     handoff_reason: str = Field(default="", description="转人工原因")

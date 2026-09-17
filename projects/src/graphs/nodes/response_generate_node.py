@@ -33,7 +33,13 @@ def response_generate_node(
     sp = llm_cfg.get("sp", "")
     up_template = llm_cfg.get("up", "")
 
-    missing_slots_str = "、".join(state.missing_slots) if state.missing_slots else "无"
+    # 提示词里的 "缺失信息/所需材料" 是一个展示用字段：模型需要同时看到
+    # "用户还缺什么" 和 "该签证类型通常要什么材料"。
+    # 但流程判断用的是结构化的 missing_slots（见 risk_assessment_node），
+    # 因此这里只做展示层合并，不改变任何路由语义。
+    display_items = list(state.missing_slots) + list(state.required_materials)
+    missing_slots_str = "、".join(display_items) if display_items else "无"
+    required_materials_str = "、".join(state.required_materials) if state.required_materials else "无"
 
     # 闲聊直达时若未写路径，兜底
     flow_path = state.flow_path or ("chitchat" if state.intent == "chitchat" else "normal")
@@ -70,6 +76,7 @@ def response_generate_node(
         risk_level=ensure_text(state.risk_level),
         risk_advice=ensure_text(state.risk_advice),
         missing_slots=missing_slots_str,
+        required_materials=required_materials_str,
         slot_follow_up=ensure_text(state.slot_follow_up),
         flow_path=ensure_text(flow_path),
         order_follow_up=ensure_text(state.order_follow_up),

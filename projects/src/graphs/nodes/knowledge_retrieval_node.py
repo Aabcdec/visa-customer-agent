@@ -42,7 +42,7 @@ def knowledge_retrieval_node(
             unique_parts.append(p)
     query = " ".join(unique_parts) if unique_parts else state.user_message
 
-    missing_slots = []
+    required_materials = []
 
     try:
         knowledge_client = LocalKnowledgeClient()
@@ -63,9 +63,11 @@ def knowledge_retrieval_node(
 
             knowledge_context = "\n\n---\n\n".join(knowledge_pieces)
 
-            # material意图：分析所需材料并列出缺失项
+            # material意图：列出该签证类型的所需材料，供回复生成引用。
+            # 这是"参考资料"而不是"缺失信息"，不能写进 missing_slots，
+            # 否则风控会把它当成"还需要追问用户"（见 KnowledgeRetrievalOutput 的注释）。
             if state.intent == "material":
-                missing_slots = _analyze_missing_materials(
+                required_materials = _analyze_missing_materials(
                     state.country, state.visa_type, knowledge_context
                 )
         else:
@@ -78,7 +80,7 @@ def knowledge_retrieval_node(
 
     return KnowledgeRetrievalOutput(
         knowledge_context=knowledge_context,
-        missing_slots=missing_slots
+        required_materials=required_materials,
     )
 
 

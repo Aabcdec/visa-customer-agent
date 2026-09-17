@@ -1,0 +1,57 @@
+name: tests
+
+# 为什么这些检查放在 CI：
+#   1. 单测与接口契约测试完全离线（LLM 被替换成确定性桩），不需要任何密钥、不花钱；
+#   2. 离线金标评测把"路由/风控/订单/拒答"这些确定性契约变成可回归的门禁；
+#   3. 这样"我本地跑过了"才有意义——CI 用同一套命令在干净环境重跑一遍。
+#
+# 注意：CI 刻意不跑 live 评测。live 需要 DEEPSEEK_API_KEY 且会产生费用，
+# 适合人工在本地按需执行（python eval/run.py --mode live）。
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        # 被测工程在 projects/ 子目录，评测集与测试都在其内部。
+        working-directory: projects
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: 同步依赖（严格按 uv.lock）
+        run: uv sync --frozen --group dev
+
+      - name: 语法检查
+        # compileall 能抓住"模块里存在语法错误"这类在 import 阶段才会暴露的问题，
+        # 且比 pytest 更快给出反馈。
+        run: uv run python -m compileall -q src eval
+
+      - name: 单元测试与接口契约测试
+        run: uv run pytest -q
+
+      - name: 离线金标评测（无需 API Key）
+        # 指标不达标或有失败用例时该步骤会以退出码 2 失败。
+        run: uv run python eval/run.py --mode offline
+
+      - name: 上传评测报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-report
+          path: projects/eval/reports/
+          # 报告是失败现场最有价值的产物，所以用 always() 保证失败也上传。
+          if-no-files-found: warn

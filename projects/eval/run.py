@@ -1,9 +1,30 @@
-"""跑一遍 /run：打印是否拒答、是否引用检索。
+"""金标评测 CLI：跑评测集 → 出指标 → 写报告 → 用退出码做门禁。
 
-用法:
-  # 先启动服务: bash scripts/http_run.sh -p 5000
-  python eval/run.py
-  python eval/run.py --base-url http://127.0.0.1:5000 --limit 10
+用法：
+    # 离线模式（推荐日常/CI 使用，不需要 API Key、不花钱）
+    python eval/run.py --mode offline
+
+    # 线上模式（需要先起服务：bash scripts/http_run.sh -p 5000）
+    python eval/run.py --mode live --base-url http://127.0.0.1:5000
+
+    # 冒烟：只跑前 10 条
+    python eval/run.py --mode offline --limit 10
+
+    # 只改某几个阈值（例如本地调试时放宽）
+    python eval/run.py --mode offline --threshold flow_accuracy=0.8
+
+产物：
+    eval/reports/report.json   机器可读（含逐条结果与指标），便于趋势对比
+    eval/reports/report.md     人可读，失败原因与跳过原因都在里面
+
+退出码：
+    0  全部通过且指标达标
+    1  环境/配置错误（评测集非法、服务不可达）
+    2  有用例失败，或指标未达阈值
+
+为什么退出码要区分 1 和 2：
+    "评测集写错了" 和 "系统行为不对" 是两类完全不同的故障，
+    CI 里需要能一眼分辨，否则会把数据集笔误误当成模型退化。
 """
 from __future__ import annotations
 
@@ -13,59 +34,53 @@ import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict, List, Optional, Tuple
 
-CASES_PATH = Path(__file__).resolve().parent / "cases.jsonl"
+# 兼容 `python eval/run.py` 与 `python -m eval.run` 两种调用方式：
+# 直接执行时 sys.path[0] 是 eval/ 目录，拿不到 eval 包本身和 src/。
+if __package__ in (None, ""):
+    _PROJECT_ROOT = Path(__file__).resolve().parents[1]
+    for _path in (str(_PROJECT_ROOT), str(_PROJECT_ROOT / "src")):
+        if _path not in sys.path:
+            sys.path.insert(0, _path)
 
-# 拒答/转人工：无知识、禁承诺、高风险 handoff
-REFUSAL_MARKERS = (
-    "暂未查询到",
-    "未查询到",
-    "无法保证",
-    "不能承诺",
-    "无法承诺",
-    "不能保证",
-    "转接",
-    "转人工",
-    "高级签证顾问",
-    "建议访问",
-    "使领馆官网",
-    "不支持保证出签",
-    "禁止",
+from eval.dataset import load_cases  # noqa: E402
+from eval.evaluator import (  # noqa: E402
+    DEFAULT_THRESHOLDS,
+    CaseResult,
+    aggregate,
+    evaluate_case,
+    gate,
+    render_markdown,
 )
+from eval.offline_runner import offline_case_view, run_case_offline  # noqa: E402
 
-# 回复里出现可核对的政策/材料表述，视为引用了检索或订单结果
-CITATION_MARKERS = (
-    "知识库",
-    "办理周期",
-    "工作日",
-    "有效期",
-    "材料",
-    "面签",
-    "免签",
-    "DS-160",
-    "在职证明",
-    "银行流水",
-    "订单",
-    "进度",
-    "状态",
-)
+DEFAULT_CASES = Path(__file__).resolve().parent / "cases.jsonl"
+DEFAULT_REPORT_DIR = Path(__file__).resolve().parent / "reports"
+
+# 离线模式不评意图（expect_intent 是注入输入，详见 offline_case_view），
+# 因此这两个指标在离线报告里必然为 n/a，不参与门禁。
+LIVE_ONLY_THRESHOLDS = frozenset({"intent_accuracy"})
 
 
-def load_cases(path: Path, limit: int | None) -> list[dict[str, Any]]:
-    cases: list[dict[str, Any]] = []
-    with path.open(encoding="utf-8") as handle:
-        for line in handle:
-            line = line.strip()
-            if not line:
-                continue
-            cases.append(json.loads(line))
-            if limit is not None and len(cases) >= limit:
-                break
-    return cases
+def _parse_thresholds(raw: List[str]) -> Dict[str, float]:
+    """解析 --threshold name=value。写错名字要立刻报错，否则会以为门禁生效了。"""
+    parsed = dict(DEFAULT_THRESHOLDS)
+    for item in raw:
+        if "=" not in item:
+            raise ValueError(f"--threshold 需要 name=value 形式，收到: {item}")
+        name, _, value = item.partition("=")
+        name = name.strip()
+        if name not in DEFAULT_THRESHOLDS:
+            raise ValueError(
+                f"未知阈值 {name!r}；可用: {sorted(DEFAULT_THRESHOLDS)}"
+            )
+        parsed[name] = float(value)
+    return parsed
 
 
-def call_run(base_url: str, user_message: str, timeout: float) -> dict[str, Any]:
+def _call_run(base_url: str, user_message: str, timeout: float) -> Dict[str, Any]:
+    """调用线上 /run 端点。"""
     url = base_url.rstrip("/") + "/run"
     body = json.dumps({"user_message": user_message}, ensure_ascii=False).encode("utf-8")
     request = urllib.request.Request(
@@ -75,85 +90,194 @@ def call_run(base_url: str, user_message: str, timeout: float) -> dict[str, Any]
         method="POST",
     )
     with urllib.request.urlopen(request, timeout=timeout) as response:
-        raw = response.read().decode("utf-8")
-    return json.loads(raw)
+        return json.loads(response.read().decode("utf-8"))
 
 
-def detect_refusal(result: dict[str, Any]) -> bool:
-    if result.get("need_handoff"):
-        return True
-    reply = str(result.get("final_reply") or "")
-    return any(marker in reply for marker in REFUSAL_MARKERS)
+def _run_offline_cases(cases: List[Dict[str, Any]]) -> List[CaseResult]:
+    """离线跑全部用例。
+
+    标记 requires_llm 的用例直接跳过：它们的结论依赖模型判断，
+    用桩去"判通过"是自欺欺人。
+    """
+    results: List[CaseResult] = []
+    for case in cases:
+        if case.get("requires_llm"):
+            results.append(
+                evaluate_case(
+                    case,
+                    {},
+                    skipped=True,
+                    skip_reason="结论依赖模型判断，离线(stub)模式无法验证",
+                )
+            )
+            continue
+
+        actual = run_case_offline(case)
+        # 用 offline_case_view 去掉 expect_intent，避免自证式 100% 准确率。
+        results.append(evaluate_case(offline_case_view(case), actual))
+    return results
 
 
-def detect_cites_retrieval(result: dict[str, Any]) -> bool:
-    # GraphOutput 不含 knowledge_context，用回复文本启发式判断是否像引用检索/插件结果
-    reply = str(result.get("final_reply") or "")
-    if not reply:
-        return False
-    if "暂未查询到" in reply or "未查询到" in reply:
-        return False
-    return any(marker in reply for marker in CITATION_MARKERS)
+def _run_live_cases(
+    cases: List[Dict[str, Any]],
+    base_url: str,
+    timeout: float,
+) -> Tuple[List[CaseResult], Optional[str]]:
+    """对着真实服务跑全部用例；返回 (结果, 致命错误)。"""
+    results: List[CaseResult] = []
+    for case in cases:
+        try:
+            actual = _call_run(base_url, case["user_message"], timeout)
+        except urllib.error.HTTPError as exc:
+            body = exc.read().decode("utf-8", errors="replace")[:200]
+            results.append(
+                evaluate_case(case, {}, error=f"HTTP {exc.code}: {body}")
+            )
+        except Exception as exc:  # noqa: BLE001 — 单条失败不应中断整轮评测
+            results.append(evaluate_case(case, {}, error=str(exc)))
+        else:
+            results.append(evaluate_case(case, actual))
+    return results, None
 
 
-def mark(ok: bool | None) -> str:
-    if ok is None:
-        return "-"
-    return "Y" if ok else "N"
+def _summarize(results: List[CaseResult]) -> str:
+    """终端摘要：先给结论，再给失败清单，避免只打印一堆 Y/N。"""
+    lines: List[str] = []
+    passed = sum(1 for r in results if r.passed)
+    skipped = sum(1 for r in results if r.skipped)
+    failed = [r for r in results if not r.passed and not r.skipped]
+
+    lines.append("")
+    lines.append(f"用例: {len(results)}  通过: {passed}  失败: {len(failed)}  跳过: {skipped}")
+    if failed:
+        lines.append("")
+        lines.append("失败明细:")
+        for result in failed:
+            lines.append(f"  ✗ {result.case_id}")
+            for failure in result.failures:
+                lines.append(f"      {failure}")
+    return "\n".join(lines)
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Eval harness for visa-customer /run")
-    parser.add_argument("--base-url", default="http://127.0.0.1:5000")
-    parser.add_argument("--cases", type=Path, default=CASES_PATH)
-    parser.add_argument("--limit", type=int, default=None)
-    parser.add_argument("--timeout", type=float, default=120.0)
+    parser = argparse.ArgumentParser(
+        description="签证客服 Agent 金标评测",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--mode",
+        choices=("offline", "live"),
+        default="offline",
+        help="offline=进程内 stub LLM（默认，CI 用）；live=调用真实服务",
+    )
+    parser.add_argument("--cases", type=Path, default=DEFAULT_CASES)
+    parser.add_argument("--report-dir", type=Path, default=DEFAULT_REPORT_DIR)
+    parser.add_argument("--base-url", default="http://127.0.0.1:5000", help="live 模式的服务地址")
+    parser.add_argument("--limit", type=int, default=None, help="只跑前 N 条（冒烟用）")
+    parser.add_argument("--timeout", type=float, default=120.0, help="live 模式单条超时秒数")
+    parser.add_argument(
+        "--threshold",
+        action="append",
+        default=[],
+        metavar="NAME=VALUE",
+        help=f"覆盖门禁阈值，可重复；可用: {sorted(DEFAULT_THRESHOLDS)}",
+    )
+    parser.add_argument("--no-gate", action="store_true", help="只出报告，不因阈值失败")
     args = parser.parse_args()
 
-    cases = load_cases(args.cases, args.limit)
-    if not cases:
-        print(f"No cases in {args.cases}", file=sys.stderr)
+    try:
+        thresholds = _parse_thresholds(args.threshold)
+    except ValueError as exc:
+        print(f"参数错误: {exc}", file=sys.stderr)
         return 1
 
-    print(
-        f"{'id':<28} {'intent':<10} {'拒答':^6} {'引用检索':^8} "
-        f"{'期望拒答':^8} {'期望引用':^8} {'HTTP':^6}"
+    try:
+        cases = load_cases(args.cases, limit=args.limit)
+    except Exception as exc:  # noqa: BLE001 — 评测集非法属于配置错误
+        print(f"评测集加载失败: {exc}", file=sys.stderr)
+        return 1
+
+    if not cases:
+        print(f"评测集为空: {args.cases}", file=sys.stderr)
+        return 1
+
+    print(f"模式: {args.mode}  评测集: {args.cases}  用例数: {len(cases)}")
+
+    if args.mode == "offline":
+        results = _run_offline_cases(cases)
+        effective_thresholds = {
+            name: value
+            for name, value in thresholds.items()
+            if name not in LIVE_ONLY_THRESHOLDS
+        }
+    else:
+        results, fatal = _run_live_cases(cases, args.base_url, args.timeout)
+        if fatal:
+            print(f"线上模式致命错误: {fatal}", file=sys.stderr)
+            return 1
+        effective_thresholds = thresholds
+
+    metrics = aggregate(results)
+    violations = gate(metrics, effective_thresholds)
+
+    print(_summarize(results))
+    print("")
+    print("指标:")
+    for name, value in (
+        ("intent_accuracy", metrics.intent_accuracy),
+        ("flow_accuracy", metrics.flow_accuracy),
+        ("refusal_precision", metrics.refusal_precision),
+        ("refusal_recall", metrics.refusal_recall),
+        ("handoff_accuracy", metrics.handoff_accuracy),
+        ("constraint_pass_rate", metrics.constraint_pass_rate),
+    ):
+        shown = "n/a" if value is None else f"{value:.4f}"
+        print(f"  {name:<22} {shown}")
+
+    if violations:
+        print("")
+        print("未达阈值:")
+        for violation in violations:
+            print(f"  ! {violation}")
+
+    # 写报告（即使失败也要写，失败现场最有价值）
+    args.report_dir.mkdir(parents=True, exist_ok=True)
+    json_path = args.report_dir / "report.json"
+    md_path = args.report_dir / "report.md"
+
+    payload = {
+        "mode": args.mode,
+        "dataset": str(args.cases),
+        "thresholds": effective_thresholds,
+        "metrics": metrics.__dict__,
+        "violations": violations,
+        "cases": [
+            {
+                "id": r.case_id,
+                "passed": r.passed,
+                "skipped": r.skipped,
+                "skip_reason": r.skip_reason,
+                "error": r.error,
+                "failures": r.failures,
+                "actual": r.actual,
+            }
+            for r in results
+        ],
+    }
+    json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    md_path.write_text(
+        render_markdown(metrics, results, mode=args.mode, dataset=str(args.cases)),
+        encoding="utf-8",
     )
-    print("-" * 90)
 
-    errors = 0
-    for case in cases:
-        case_id = case.get("id", "?")
-        try:
-            result = call_run(args.base_url, case["user_message"], args.timeout)
-            status = "ok"
-        except urllib.error.HTTPError as exc:
-            errors += 1
-            body = exc.read().decode("utf-8", errors="replace")[:200]
-            print(f"{case_id:<28} {'ERR':<10} {'-':^6} {'-':^8} {'-':^8} {'-':^8} {exc.code:^6} {body}")
-            continue
-        except Exception as exc:  # noqa: BLE001 — eval 脚本要吞掉并继续下一条
-            errors += 1
-            print(f"{case_id:<28} {'ERR':<10} {'-':^6} {'-':^8} {'-':^8} {'-':^8} {'fail':^6} {exc}")
-            continue
+    print("")
+    print(f"报告: {json_path} / {md_path}")
 
-        is_refusal = detect_refusal(result)
-        cites = detect_cites_retrieval(result)
-        intent = str(result.get("intent") or "")[:10]
-        print(
-            f"{case_id:<28} {intent:<10} "
-            f"{mark(is_refusal):^6} {mark(cites):^8} "
-            f"{mark(case.get('expect_refusal')):^8} "
-            f"{mark(case.get('expect_cites_retrieval')):^8} "
-            f"{status:^6}"
-        )
-        reply = str(result.get("final_reply") or "").replace("\n", " ")
-        if reply:
-            print(f"  reply: {reply[:160]}{'...' if len(reply) > 160 else ''}")
-
-    print("-" * 90)
-    print(f"done: {len(cases)} cases, errors={errors}")
-    return 0 if errors == 0 else 2
+    if metrics.failed and not args.no_gate:
+        return 2
+    if violations and not args.no_gate:
+        return 2
+    return 0
 
 
 if __name__ == "__main__":

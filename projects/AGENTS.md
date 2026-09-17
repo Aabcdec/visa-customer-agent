@@ -36,12 +36,36 @@
 | country | str | 目标国家 |
 | visa_type | str | 签证类型 |
 | intent | str | 用户意图分类 |
-| missing_slots | List[str] | 缺失的必填信息槽位 |
+| missing_slots | List[str] | 缺失的必填信息槽位（**只由 slot_filling 写入**，决定是否追问） |
+| required_materials | List[str] | material 意图检索到的所需材料清单（仅供回复引用，**不决定流程**） |
 | risk_level | str | 风险等级(low/medium/high) |
 | order_id | str | 签证订单号 |
 | flow_path | str | ask/confirm/normal/handoff/chitchat |
 | need_confirm | bool | 中风险是否需用户确认 |
 | confirm_prompt | str | 确认问句 |
+
+> **`missing_slots` 与 `required_materials` 必须分开**：前者是"还缺用户什么信息"（触发追问），
+> 后者是"这类签证通常要什么材料"（给模型参考）。两者曾共用一个字段，导致用户问
+> "日本旅游签证要什么材料"时材料清单被当成"还缺信息"，路由成 ask，用户拿不到答案。
+
+## 对外输出（GraphOutput）
+`final_reply` / `need_handoff` / `handoff_reason` / `intent` / `risk_level` / `flow_path`
+
+> `flow_path` 必须保留：H5（`h5/assets/app.js`）用它渲染路径标签与 confirm/handoff 样式，
+> 线上评测也用它验证路由。字段一旦从 `GraphOutput` 移除，前端会静默拿到 undefined。
+
+## 风险关键词的适用范围
+`risk_assessment_node` **只扫描用户消息**，不扫描 `knowledge_context`。
+政策原文里天然含"拒签""自由职业"等字眼，那是文档在描述规则，不代表该用户存在风险；
+曾因把知识库正文纳入扫描，导致正常提问被误判为高风险并转人工。
+
+## 测试与评测
+- 单元/契约测试：`projects/tests/`（离线，无需 API Key），见 `tests/README.md`
+- 金标评测：`projects/eval/`，见 `eval/README.md`
+  - `python eval/run.py --mode offline`（CI 用，无需密钥）
+  - `python eval/run.py --mode live`（需 `DEEPSEEK_API_KEY`，会产生费用）
+- CI：`.github/workflows/tests.yml`（compileall + pytest + 离线评测门禁）
+
 
 ## LLM 配置
 - 模型：DeepSeek 直连（`utils/llm.py`，基于 langchain-openai ChatOpenAI）
